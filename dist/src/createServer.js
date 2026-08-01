@@ -6,6 +6,42 @@ import { PathFilter } from "./pathfilter.js";
 import { SearchService } from "./search.js";
 import { handleWikiLinkTool } from "./wikilink/index.js";
 import { resolve } from "path";
+/**
+ * Per-tool behaviour hints (MCP tool annotations).
+ *
+ * Clients and proxies route calls by these: with no annotations at all, a strict
+ * client has to assume the worst for every tool, while a permissive one shows
+ * `delete_note` as indistinguishable from `read_note`. Everything here is local
+ * to the vault, so `openWorldHint` is false across the board (applied below).
+ */
+const TOOL_ANNOTATIONS = {
+    // Read-only
+    read_note: { readOnlyHint: true },
+    list_directory: { readOnlyHint: true },
+    search_notes: { readOnlyHint: true },
+    read_multiple_notes: { readOnlyHint: true },
+    get_notes_info: { readOnlyHint: true },
+    get_frontmatter: { readOnlyHint: true },
+    get_vault_stats: { readOnlyHint: true },
+    list_all_tags: { readOnlyHint: true },
+    wiki_link: { readOnlyHint: true },
+    // Mutating but not destructive: they add or amend, they do not drop content
+    write_note: { readOnlyHint: false, destructiveHint: false },
+    patch_note: { readOnlyHint: false, destructiveHint: false },
+    update_frontmatter: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    manage_tags: { readOnlyHint: false, destructiveHint: false },
+    // Destructive: remove or overwrite something that existed
+    delete_note: { readOnlyHint: false, destructiveHint: true },
+    move_note: { readOnlyHint: false, destructiveHint: true },
+    move_file: { readOnlyHint: false, destructiveHint: true },
+};
+/** Attach the annotations above to a tool list, defaulting every tool to closed-world. */
+function withAnnotations(tools) {
+    return tools.map((tool) => ({
+        ...tool,
+        annotations: { openWorldHint: false, ...TOOL_ANNOTATIONS[tool.name] },
+    }));
+}
 export function createServer(vaultPath, options = {}) {
     const { name = "mcpvault", version = "0.0.0", pathFilter = new PathFilter(), frontmatterHandler = new FrontmatterHandler(), } = options;
     const resolvedVaultPath = resolve(vaultPath);
@@ -16,7 +52,7 @@ export function createServer(vaultPath, options = {}) {
     });
     server.setRequestHandler(ListToolsRequestSchema, async () => {
         return {
-            tools: [
+            tools: withAnnotations([
                 {
                     name: "read_note",
                     description: "Read a note from the Obsidian vault",
@@ -231,7 +267,7 @@ export function createServer(vaultPath, options = {}) {
                         required: ["document"]
                     }
                 }
-            ]
+            ])
         };
     });
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
