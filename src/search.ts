@@ -29,6 +29,7 @@ export class SearchService {
     const {
       query,
       limit = 5,
+      offset = 0,
       searchContent = true,
       searchFrontmatter = false,
       caseSensitive = false,
@@ -43,7 +44,10 @@ export class SearchService {
     const normalizedPrefix = pathPrefix ? normalizeSubtree(pathPrefix) : '';
     const normalizedExcludes = (excludePaths || []).map(normalizeSubtree).filter(Boolean);
 
-    const maxLimit = Math.min(limit, 20);
+    // Upper bound guards against a runaway response, not against paging: use
+    // `offset` to walk past it. The old hard cap of 20 had no way past it at all.
+    const safeOffset = Math.max(0, Math.floor(offset));
+    const maxLimit = Math.min(Math.max(1, Math.floor(limit)), 200);
 
     // Corpus stats for reranking
     let totalDocLength = 0;
@@ -186,7 +190,7 @@ export class SearchService {
       }
     }
 
-    const results: SearchResult[] = this.rerank(candidates, scoringTerms, termDocFreq, docCount, totalDocLength, maxLimit);
+    const results: SearchResult[] = this.rerank(candidates, scoringTerms, termDocFreq, docCount, totalDocLength, maxLimit, safeOffset);
     return results;
   }
 
@@ -220,7 +224,8 @@ export class SearchService {
     termDocFreq: Map<string, number>,
     docCount: number,
     totalDocLength: number,
-    maxLimit: number
+    maxLimit: number,
+    offset = 0
   ): SearchResult[] {
     const avgdl = docCount > 0 ? totalDocLength / docCount : 1;
     const k1 = 1.2;
@@ -238,6 +243,6 @@ export class SearchService {
     });
 
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, maxLimit).map(s => s.result);
+    return scored.slice(offset, offset + maxLimit).map(s => s.result);
   }
 }

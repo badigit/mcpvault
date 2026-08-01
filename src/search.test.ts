@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { SearchService } from "./search.js";
 import { PathFilter } from "./pathfilter.js";
 import { writeFile, mkdir, mkdtemp, rm } from "fs/promises";
-import { join } from "path";
+import { join, dirname } from "path";
 import { tmpdir } from "os";
 
 let testVaultPath: string;
@@ -24,7 +24,9 @@ afterEach(async () => {
 // Helper to write a note directly to disk
 async function writeNote(path: string, content: string) {
   const fullPath = join(testVaultPath, path);
-  const dir = fullPath.substring(0, fullPath.lastIndexOf("/"));
+  // dirname, not lastIndexOf("/"): on Windows join() yields backslashes, so the
+  // manual split produced "" and every write failed with ENOENT.
+  const dir = dirname(fullPath);
   if (dir !== testVaultPath) {
     await mkdir(dir, { recursive: true });
   }
@@ -84,14 +86,24 @@ describe("SearchService", () => {
     expect(results).toHaveLength(2);
   });
 
-  test("caps limit at 20", async () => {
+  test("honours limits above the old cap of 20", async () => {
     for (let i = 0; i < 25; i++) {
       await writeNote(`note-${i}.md`, `# Note ${i}\n\nkeyword here.`);
     }
 
     const results = await searchService.search({ query: "keyword", limit: 100 });
 
-    expect(results.length).toBeLessThanOrEqual(20);
+    expect(results).toHaveLength(25);
+  });
+
+  test("still bounds absurd limits", async () => {
+    for (let i = 0; i < 25; i++) {
+      await writeNote(`note-${i}.md`, `# Note ${i}\n\nkeyword here.`);
+    }
+
+    const results = await searchService.search({ query: "keyword", limit: 10_000_000 });
+
+    expect(results.length).toBeLessThanOrEqual(200);
   });
 
   test("defaults limit to 5", async () => {
@@ -322,5 +334,53 @@ describe("SearchService", () => {
       const results = await searchService.search({ query: "banana", limit: 20, pathPrefix: "Projects" });
       expect(results.map(r => r.p)).not.toContain("Project-notes/x.md");
     });
+  });
+});
+
+// ── limit and pagination ─────────────────────────────────────────────────────
+// The limit used to be capped at 20 with no way to page past it, so a vault-wide
+// question could not be answered without re-querying and hoping for new hits.
+
+describe("search limit and offset", () => {
+  test("returns more than the old hard cap of 20", async () => {
+    for (let i = 0; i < 25; i++) {
+      await writeFile(join(testVaultPath, `n${i}.md`), "needle everywhere", "utf-8");
+    }
+
+    const results = await searchService.search({ query: "needle", limit: 25 });
+
+    expect(results.length).toBe(25);
+  });
+
+  test("offset pages through results without overlap", async () => {
+    for (let i = 0; i < 10; i++) {
+      await writeFile(join(testVaultPath, `p${i}.md`), "needle everywhere", "utf-8");
+    }
+
+    const first = await searchService.search({ query: "needle", limit: 4 });
+    const second = await searchService.search({ query: "needle", limit: 4, offset: 4 });
+
+    expect(first).toHaveLength(4);
+    expect(second).toHaveLength(4);
+    const overlap = first.filter((r) => second.some((s) => s.p === r.p));
+    expect(overlap).toEqual([]);
+  });
+
+  test("offset past the end returns nothing", async () => {
+    await writeFile(join(testVaultPath, "only.md"), "needle", "utf-8");
+
+    const results = await searchService.search({ query: "needle", limit: 5, offset: 50 });
+
+    expect(results).toEqual([]);
+  });
+
+  test("limit stays bounded by a sane maximum", async () => {
+    for (let i = 0; i < 5; i++) {
+      await writeFile(join(testVaultPath, `q${i}.md`), "needle", "utf-8");
+    }
+
+    const results = await searchService.search({ query: "needle", limit: 100000 });
+
+    expect(results.length).toBe(5);
   });
 });
