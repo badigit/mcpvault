@@ -38,22 +38,26 @@ test("server registers 16 tools", async () => {
   ]);
 
   const result = await client.listTools();
-  expect(result.tools).toHaveLength(16);
+  expect(result.tools).toHaveLength(20);
 
   const toolNames = result.tools.map((t) => t.name).sort();
   expect(toolNames).toEqual([
     "delete_note",
+    "find_broken_links",
     "get_frontmatter",
     "get_notes_info",
     "get_vault_stats",
+    "graph_neighbors",
     "list_all_tags",
     "list_directory",
     "manage_tags",
     "move_file",
     "move_note",
+    "note_links",
     "patch_note",
     "read_multiple_notes",
     "read_note",
+    "rename_note_with_links",
     "search_notes",
     "update_frontmatter",
     "wiki_link",
@@ -259,4 +263,116 @@ test("destructive and read-only tools are marked as such", async () => {
   expect(byName.write_note.readOnlyHint).toBe(false);
   expect(byName.write_note.destructiveHint).toBe(false);
   expect(byName.patch_note.destructiveHint).toBe(false);
+});
+
+// ── Graph tools ──────────────────────────────────────────────────────────────
+
+async function seedGraph() {
+  const { writeFile, mkdir } = await import("fs/promises");
+  const { join, dirname } = await import("path");
+  const put = async (rel: string, body: string) => {
+    const full = join(testVaultPath, rel);
+    await mkdir(dirname(full), { recursive: true });
+    await writeFile(full, body, "utf-8");
+  };
+  await put("hub.md", "Links to [[leaf]] and [[ghost]].");
+  await put("inbound.md", "Points at [[hub]].");
+  await put("leaf.md", "A leaf.");
+  await put("lonely.md", "Nobody links here.");
+}
+
+test("note_links reports outgoing, backlinks and unresolved", async () => {
+  await seedGraph();
+  const { server, client } = await connectClient();
+  try {
+    const result: any = await client.callTool({ name: "note_links", arguments: { path: "hub.md" } });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload.outgoing.map((o: any) => o.path)).toEqual(["leaf.md"]);
+    expect(payload.backlinks).toEqual(["inbound.md"]);
+    expect(payload.unresolved).toEqual(["ghost"]);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("find_broken_links reports the dangling target and orphans on request", async () => {
+  await seedGraph();
+  const { server, client } = await connectClient();
+  try {
+    const result: any = await client.callTool({
+      name: "find_broken_links",
+      arguments: { includeOrphans: true },
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload.brokenLinks).toEqual([{ from: "hub.md", target: "ghost" }]);
+    expect(payload.totalBroken).toBe(1);
+    expect(payload.orphans).toContain("lonely.md");
+    expect(payload.orphans).not.toContain("leaf.md");
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("graph_neighbors walks both directions", async () => {
+  await seedGraph();
+  const { server, client } = await connectClient();
+  try {
+    const result: any = await client.callTool({
+      name: "graph_neighbors",
+      arguments: { path: "hub.md", depth: 1 },
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload.nodes.sort()).toEqual(["hub.md", "inbound.md", "leaf.md"]);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("rename_note_with_links moves the note and fixes references", async () => {
+  await seedGraph();
+  const { readFile } = await import("fs/promises");
+  const { join } = await import("path");
+  const { server, client } = await connectClient();
+  try {
+    const result: any = await client.callTool({
+      name: "rename_note_with_links",
+      arguments: { oldPath: "leaf.md", newPath: "renamed-leaf.md" },
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload.updatedNotes).toEqual(["hub.md"]);
+    const hub = await readFile(join(testVaultPath, "hub.md"), "utf-8");
+    expect(hub).toContain("[[renamed-leaf]]");
+    expect(hub).not.toContain("[[leaf]]");
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("rename_note_with_links dryRun changes nothing", async () => {
+  await seedGraph();
+  const { readFile } = await import("fs/promises");
+  const { join } = await import("path");
+  const { server, client } = await connectClient();
+  try {
+    const result: any = await client.callTool({
+      name: "rename_note_with_links",
+      arguments: { oldPath: "leaf.md", newPath: "renamed-leaf.md", dryRun: true },
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload.wouldUpdate).toEqual(["hub.md"]);
+    const hub = await readFile(join(testVaultPath, "hub.md"), "utf-8");
+    expect(hub).toContain("[[leaf]]");
+  } finally {
+    await client.close();
+    await server.close();
+  }
 });
