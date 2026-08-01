@@ -19,13 +19,16 @@ export class SearchService {
         this.vaultPath = resolve(vaultPath);
     }
     async search(params) {
-        const { query, limit = 5, searchContent = true, searchFrontmatter = false, caseSensitive = false, pathPrefix, excludePaths } = params;
+        const { query, limit = 5, offset = 0, searchContent = true, searchFrontmatter = false, caseSensitive = false, pathPrefix, excludePaths } = params;
         if (!query || query.trim().length === 0) {
             throw new Error('Search query cannot be empty');
         }
         const normalizedPrefix = pathPrefix ? normalizeSubtree(pathPrefix) : '';
         const normalizedExcludes = (excludePaths || []).map(normalizeSubtree).filter(Boolean);
-        const maxLimit = Math.min(limit, 20);
+        // Upper bound guards against a runaway response, not against paging: use
+        // `offset` to walk past it. The old hard cap of 20 had no way past it at all.
+        const safeOffset = Math.max(0, Math.floor(offset));
+        const maxLimit = Math.min(Math.max(1, Math.floor(limit)), 200);
         // Corpus stats for reranking
         let totalDocLength = 0;
         let docCount = 0;
@@ -155,7 +158,7 @@ export class SearchService {
                 }
             }
         }
-        const results = this.rerank(candidates, scoringTerms, termDocFreq, docCount, totalDocLength, maxLimit);
+        const results = this.rerank(candidates, scoringTerms, termDocFreq, docCount, totalDocLength, maxLimit, safeOffset);
         return results;
     }
     async findMarkdownFiles(dirPath) {
@@ -179,7 +182,7 @@ export class SearchService {
         }
         return markdownFiles;
     }
-    rerank(candidates, terms, termDocFreq, docCount, totalDocLength, maxLimit) {
+    rerank(candidates, terms, termDocFreq, docCount, totalDocLength, maxLimit, offset = 0) {
         const avgdl = docCount > 0 ? totalDocLength / docCount : 1;
         const k1 = 1.2;
         const b = 0.75;
@@ -194,6 +197,6 @@ export class SearchService {
             return { score, result: c.result };
         });
         scored.sort((a, b) => b.score - a.score);
-        return scored.slice(0, maxLimit).map(s => s.result);
+        return scored.slice(offset, offset + maxLimit).map(s => s.result);
     }
 }
