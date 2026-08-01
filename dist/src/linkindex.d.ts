@@ -57,11 +57,23 @@ export declare class LinkIndex {
     private entries;
     /** basename (without .md) → vault-relative paths, sorted root-first then alphabetically. */
     private byBasename;
+    /** Every known note path — used for suffix matching during resolution. */
+    private allPathsCache;
     constructor(vaultPath: string, pathFilter: PathFilter);
     /** Rescan the vault, reusing cached entries for notes that did not change. */
     refresh(): Promise<RefreshStats>;
-    /** Resolve a link target to a vault-relative path, or null when nothing matches. */
-    resolve(target: string): string | null;
+    /**
+     * Resolve a link target to a vault-relative path, or null when nothing matches.
+     *
+     * Mirrors how Obsidian resolves a qualified link, which is NOT "vault-relative
+     * only": `[[Knowledge/note]]` written inside `Dev/B24/` points at
+     * `Dev/B24/Knowledge/note.md`, and a partial path is allowed to match the tail
+     * of a longer one. Treating those as unresolved reports healthy links as broken.
+     *
+     * Order: exact vault-relative → relative to the linking note's folder →
+     * unique path suffix → basename.
+     */
+    resolve(target: string, fromPath?: string): string | null;
     private hasPath;
     allPaths(): string[];
     getOutgoing(path: string): OutgoingLink[];

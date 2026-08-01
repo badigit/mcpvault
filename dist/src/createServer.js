@@ -462,11 +462,22 @@ export function createServer(vaultPath, options = {}) {
                     const path = trimmedArgs.path;
                     const outgoing = linkIndex.getOutgoing(path);
                     const indent = trimmedArgs.prettyPrint ? 2 : undefined;
+                    // A note may link to the same target several times; report each
+                    // neighbour once with a count instead of repeating it.
+                    const resolvedCounts = new Map();
+                    for (const link of outgoing) {
+                        if (link.resolved)
+                            resolvedCounts.set(link.resolved, (resolvedCounts.get(link.resolved) ?? 0) + 1);
+                    }
+                    const backlinkCounts = new Map();
+                    for (const back of linkIndex.getBacklinks(path)) {
+                        backlinkCounts.set(back.from, (backlinkCounts.get(back.from) ?? 0) + 1);
+                    }
                     const payload = {
                         path,
-                        outgoing: outgoing.filter((l) => l.resolved).map((l) => ({ target: l.target, path: l.resolved })),
-                        backlinks: linkIndex.getBacklinks(path).map((b) => b.from),
-                        unresolved: outgoing.filter((l) => !l.resolved).map((l) => l.target),
+                        outgoing: [...resolvedCounts].map(([p, count]) => ({ path: p, count })),
+                        backlinks: [...backlinkCounts].map(([p, count]) => ({ path: p, count })),
+                        unresolved: [...new Set(outgoing.filter((l) => !l.resolved).map((l) => l.target))],
                     };
                     return {
                         content: [{ type: "text", text: JSON.stringify(payload, null, indent) }],

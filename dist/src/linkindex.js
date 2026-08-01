@@ -113,6 +113,8 @@ export class LinkIndex {
     entries = new Map();
     /** basename (without .md) → vault-relative paths, sorted root-first then alphabetically. */
     byBasename = new Map();
+    /** Every known note path — used for suffix matching during resolution. */
+    allPathsCache = [];
     constructor(vaultPath, pathFilter) {
         this.pathFilter = pathFilter;
         this.vaultPath = resolve(vaultPath);
@@ -123,7 +125,8 @@ export class LinkIndex {
         const seen = new Set();
         let parsed = 0;
         let reused = 0;
-        // Resolution needs the full file list, so build the basename map first.
+        // Resolution needs the full file list, so build the lookup maps first.
+        this.allPathsCache = files;
         this.byBasename = new Map();
         for (const rel of files) {
             const base = rel.slice(rel.lastIndexOf('/') + 1).replace(/\.md$/i, '');
@@ -175,19 +178,41 @@ export class LinkIndex {
         }
         // Targets are resolved against the current file list on every refresh:
         // adding or deleting a note can fix or break links in notes that did not change.
-        for (const entry of this.entries.values()) {
+        for (const [from, entry] of this.entries) {
             for (const link of entry.links) {
-                link.resolved = this.resolve(link.target);
+                link.resolved = this.resolve(link.target, from);
             }
         }
         return { parsed, reused, total: this.entries.size };
     }
-    /** Resolve a link target to a vault-relative path, or null when nothing matches. */
-    resolve(target) {
+    /**
+     * Resolve a link target to a vault-relative path, or null when nothing matches.
+     *
+     * Mirrors how Obsidian resolves a qualified link, which is NOT "vault-relative
+     * only": `[[Knowledge/note]]` written inside `Dev/B24/` points at
+     * `Dev/B24/Knowledge/note.md`, and a partial path is allowed to match the tail
+     * of a longer one. Treating those as unresolved reports healthy links as broken.
+     *
+     * Order: exact vault-relative → relative to the linking note's folder →
+     * unique path suffix → basename.
+     */
+    resolve(target, fromPath = '') {
         const withoutExt = target.replace(/\.md$/i, '');
         if (target.includes('/')) {
-            const wanted = `${withoutExt}.md`;
-            return this.hasPath(wanted) ? wanted : null;
+            const exact = `${withoutExt}.md`;
+            if (this.hasPath(exact))
+                return exact;
+            const fromDir = fromPath.includes('/') ? fromPath.slice(0, fromPath.lastIndexOf('/')) : '';
+            if (fromDir) {
+                const relative = `${fromDir}/${withoutExt}.md`;
+                if (this.hasPath(relative))
+                    return relative;
+            }
+            const suffix = `/${withoutExt}.md`;
+            const matches = this.allPathsCache.filter((p) => p.endsWith(suffix));
+            if (matches.length > 0)
+                return matches.sort(compareRootFirst)[0];
+            return null;
         }
         return this.byBasename.get(withoutExt)?.[0] ?? null;
     }

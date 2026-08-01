@@ -262,3 +262,46 @@ describe("rewriteLinksTo", () => {
     expect(out).toBe("![[New]]");
   });
 });
+
+describe("Obsidian-style path resolution", () => {
+  test("resolves a link relative to the linking note's folder", async () => {
+    await note("Dev/B24/Handoff.md", "See [[Knowledge/harness]].");
+    await note("Dev/B24/Knowledge/harness.md", "");
+
+    const idx = index();
+    await idx.refresh();
+
+    expect(idx.getOutgoing("Dev/B24/Handoff.md")[0].resolved).toBe("Dev/B24/Knowledge/harness.md");
+    expect(idx.getBroken()).toEqual([]);
+  });
+
+  test("resolves a partial path suffix from anywhere in the vault", async () => {
+    await note("top.md", "See [[Knowledge/harness]].");
+    await note("Dev/B24/Knowledge/harness.md", "");
+
+    const idx = index();
+    await idx.refresh();
+
+    expect(idx.getOutgoing("top.md")[0].resolved).toBe("Dev/B24/Knowledge/harness.md");
+  });
+
+  test("an exact vault-relative path still wins over a suffix match", async () => {
+    await note("a.md", "[[Knowledge/harness]]");
+    await note("Knowledge/harness.md", "");
+    await note("Deep/Knowledge/harness.md", "");
+
+    const idx = index();
+    await idx.refresh();
+
+    expect(idx.getOutgoing("a.md")[0].resolved).toBe("Knowledge/harness.md");
+  });
+
+  test("a genuinely missing qualified target stays broken", async () => {
+    await note("a.md", "[[Nope/missing]]");
+
+    const idx = index();
+    await idx.refresh();
+
+    expect(idx.getOutgoing("a.md")[0].resolved).toBeNull();
+  });
+});

@@ -288,8 +288,8 @@ test("note_links reports outgoing, backlinks and unresolved", async () => {
     const result: any = await client.callTool({ name: "note_links", arguments: { path: "hub.md" } });
     const payload = JSON.parse(result.content[0].text);
 
-    expect(payload.outgoing.map((o: any) => o.path)).toEqual(["leaf.md"]);
-    expect(payload.backlinks).toEqual(["inbound.md"]);
+    expect(payload.outgoing).toEqual([{ path: "leaf.md", count: 1 }]);
+    expect(payload.backlinks).toEqual([{ path: "inbound.md", count: 1 }]);
     expect(payload.unresolved).toEqual(["ghost"]);
   } finally {
     await client.close();
@@ -371,6 +371,24 @@ test("rename_note_with_links dryRun changes nothing", async () => {
     expect(payload.wouldUpdate).toEqual(["hub.md"]);
     const hub = await readFile(join(testVaultPath, "hub.md"), "utf-8");
     expect(hub).toContain("[[leaf]]");
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("note_links counts repeated links once per neighbour", async () => {
+  const { writeFile } = await import("fs/promises");
+  const { join } = await import("path");
+  await writeFile(join(testVaultPath, "target.md"), "t", "utf-8");
+  await writeFile(join(testVaultPath, "src.md"), "[[target]] twice: [[target]]", "utf-8");
+
+  const { server, client } = await connectClient();
+  try {
+    const result: any = await client.callTool({ name: "note_links", arguments: { path: "src.md" } });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload.outgoing).toEqual([{ path: "target.md", count: 2 }]);
   } finally {
     await client.close();
     await server.close();
