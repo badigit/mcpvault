@@ -20,6 +20,10 @@ function cleanWikiTarget(inner) {
 }
 const WIKILINK_RE = /\[\[([^\[\]]+)\]\]/g;
 const MDLINK_RE = /\[[^\]]*\]\(([^)\s]+)\)/g;
+function decodeLinkPath(path) {
+    try { return decodeURIComponent(path); }
+    catch { return path; }
+}
 /** Extract every internal link from note content, in source order. */
 export function extractLinks(content) {
     const body = stripCode(content);
@@ -37,7 +41,7 @@ export function extractLinks(content) {
         if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('#') || href.startsWith('//')) {
             continue;
         }
-        const target = decodeURIComponent(href.split('#')[0] ?? '').trim();
+        const target = decodeLinkPath(href.split('#')[0] ?? '').trim();
         if (target)
             found.push({ target, raw: m[0], kind: 'markdown' });
     }
@@ -89,7 +93,7 @@ export function rewriteLinksTo(content, oldPath, newPath) {
                 return raw;
             }
             const [pathPart, frag] = href.split('#');
-            const decoded = decodeURIComponent(pathPart ?? '');
+            const decoded = decodeLinkPath(pathPart ?? '');
             if (decoded !== oldPath && decoded.replace(/\.md$/i, '') !== oldNoExt)
                 return raw;
             const replacement = frag ? `${newPath}#${frag}` : newPath;
