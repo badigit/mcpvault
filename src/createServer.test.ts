@@ -400,3 +400,19 @@ test("failed directory move_note is followed by list, read, and a valid move", a
     await server.close();
   }
 }, 10_000);
+
+test("search_notes exposes offset pagination through the public MCP client", async () => {
+  for (let i = 0; i < 9; i++) await writeFile(join(testVaultPath, `page-${i}.md`), "unique paging token");
+  const { server, client } = await connectClient();
+  try {
+    const run = async (offset: number) => {
+      const result = await client.callTool({ name: "search_notes", arguments: { query: "paging", limit: 4, offset } });
+      expect(result.isError).toBeFalsy();
+      return JSON.parse((result.content as any)[0].text) as { p: string }[];
+    };
+    const first = await run(0), second = await run(4);
+    expect(first).toHaveLength(4);
+    expect(second).toHaveLength(4);
+    expect(first.some((a) => second.some((b) => a.p === b.p))).toBe(false);
+  } finally { await client.close(); await server.close(); }
+});

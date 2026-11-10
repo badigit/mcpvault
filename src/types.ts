@@ -58,6 +58,8 @@ export interface PathFilterConfig {
 export interface SearchParams {
   query: string;
   limit?: number;
+  /** Number of ranked results to skip before returning a page. */
+  offset?: number;
   searchContent?: boolean;
   searchFrontmatter?: boolean;
   caseSensitive?: boolean;

@@ -143,7 +143,8 @@ export function createServer(vaultPath: string, options: CreateServerOptions = {
             type: "object",
             properties: {
               query: { type: "string", description: "Search query text" },
-              limit: { type: "number", description: "Maximum number of results (default: 5, max: 20)", default: 5 },
+              limit: { type: "number", description: "Maximum results per page (default: 5, max: 200)", default: 5 },
+              offset: { type: "number", description: "Skip this many ranked results (default: 0)", minimum: 0, default: 0 },
               searchContent: { type: "boolean", description: "Search in note content (default: true)", default: true },
               searchFrontmatter: { type: "boolean", description: "Search in frontmatter (default: false)", default: false },
               caseSensitive: { type: "boolean", description: "Case sensitive search (default: false)", default: false },
@@ -407,6 +408,7 @@ export function createServer(vaultPath: string, options: CreateServerOptions = {
           const results = await searchService.search({
             query: trimmedArgs.query,
             limit: trimmedArgs.limit,
+            offset: trimmedArgs.offset,
             searchContent: trimmedArgs.searchContent,
             searchFrontmatter: trimmedArgs.searchFrontmatter,
             caseSensitive: trimmedArgs.caseSensitive,
