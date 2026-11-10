@@ -305,3 +305,13 @@ describe("Obsidian-style path resolution", () => {
     expect(idx.getOutgoing("a.md")[0].resolved).toBeNull();
   });
 });
+
+test("malformed percent-encoded markdown links do not crash graph indexing or renaming", async () => {
+  await note("A.md", "See [invalid](%BROKEN) and [[Target]].");
+  await note("Target.md", "Body");
+  const idx = index();
+  await expect(idx.refresh()).resolves.toBeDefined();
+  expect(idx.getOutgoing("A.md").some((link) => link.target === "%BROKEN")).toBe(true);
+  expect(rewriteLinksTo("[invalid](%BROKEN) and [[Target]]", "Target.md", "New.md"))
+    .toBe("[invalid](%BROKEN) and [[New]]");
+});
