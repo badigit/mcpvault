@@ -109,13 +109,14 @@ An MCP client starts MCPVault as a local stdio process and passes the vault path
 
 - AST-aware frontmatter updates preserve formatting for unchanged YAML fields.
 - Path checks block traversal, symlink escapes, dotfiles, `.obsidian`, `.git`, and `node_modules`.
-- Eighteen MCP tools cover note and file operations:
+- Twenty-two MCP tools cover note, file and vault graph operations:
   - File operations: `read_note`, `write_note`, `patch_note`, `delete_note`, `move_note`, `move_file`
   - Partial reads: `get_note_outline`, `read_note_lines`
   - Directory and batch reads: `list_directory`, `read_multiple_notes`
-  - Search: `search_notes` with multi-word matching and BM25 reranking
+  - Search: `search_notes` with multi-word matching, BM25 reranking and `offset` pagination (up to 200 results per page)
   - Metadata and tags: `get_frontmatter`, `update_frontmatter`, `get_notes_info`, `get_vault_stats`, `manage_tags`, `list_all_tags`
   - Wiki links: `wiki_link` resolves names and returns alternative paths when a name is ambiguous
+  - Link graph: `note_links`, `find_broken_links`, `graph_neighbors`, `rename_note_with_links`
 - `write_note` supports overwrite, append, and prepend modes.
 - `delete_note` and `move_file` require matching confirmation paths.
 - Path arguments are trimmed before validation.

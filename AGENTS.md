@@ -48,7 +48,7 @@ website-shibumi/       # Bun + Hono + TSX website serving mcpvault.org (separate
 
 ### Core Components
 
-**server.ts** — Entry point. Registers 18 MCP tools, handles CLI args (--help, --version, --read-only, vault path), initializes services, routes tool calls. Read-only mode hides mutating tools and rejects direct mutation calls. Auto-trims whitespace from all path arguments. Exits on stdin EOF / SIGTERM / SIGINT (graceful `server.close()`), otherwise hosts orphan the process (#159).
+**server.ts** — Entry point. Registers 22 MCP tools, handles CLI args (--help, --version, --read-only, vault path), initializes services, routes tool calls. Read-only mode hides mutating tools and rejects direct mutation calls. Auto-trims whitespace from all path arguments. Exits on stdin EOF / SIGTERM / SIGINT (graceful `server.close()`), otherwise hosts orphan the process (#159).
 
 **FileSystemService** (`src/filesystem.ts`): Orchestrates file ops with security. Path resolution validates the nearest existing ancestor for new paths and rejects dangling symlinks. Implements: read, write, patch, delete, move, list, batch read, outline and line-range reads, frontmatter update, tag management, vault stats. Uses native `fs/promises`. In-place note mutations queue by canonical target within one service instance, then write a hidden sibling, sync it, and rename it over the target. Existing symlinks and POSIX file modes are preserved. Move/delete paths keep their separate symlink behavior; locks do not coordinate other processes.
 
@@ -56,9 +56,11 @@ website-shibumi/       # Bun + Hono + TSX website serving mcpvault.org (separate
 
 **PathFilter** (`src/pathfilter.ts`) — Blocks `.obsidian/`, `.git/`, `node_modules/`, system files, dot files. Note tools allow `.md`, `.markdown`, `.txt`; directory listings may include other file types by filename. Checks path components independently.
 
-**SearchService** (`src/search.ts`) — Content and frontmatter search with multi-word matching and BM25 relevance reranking. Returns token-optimized results with minified field names: `{p, t, ex, mc, ln, uri}`. Max 20 results.
+**SearchService** (`src/search.ts`) — Content and frontmatter search with multi-word matching and BM25 relevance reranking. Returns token-optimized results with minified field names: `{p, t, ex, mc, ln, uri}`. Max 200 results per page with `offset` pagination.
 
-### 18 MCP Tools
+**LinkIndex** (`src/linkindex.ts`) — Incrementally refreshes note links; reuses cached note contents when metadata is unchanged, filters excluded subtrees, and powers graph queries and link-aware rename.
+
+### 22 MCP Tools
 
 | Tool | Description |
 |------|-------------|
@@ -80,6 +82,10 @@ website-shibumi/       # Bun + Hono + TSX website serving mcpvault.org (separate
 | get_vault_stats | Vault statistics: total notes, folders, size, recent files |
 | list_all_tags | List all tags across the vault with occurrence counts |
 | wiki_link | Resolve Obsidian [[wiki links]] (incl. path-qualified [[folder/Note]]) and return the note |
+| note_links | Show outgoing links, backlinks and unresolved references |
+| find_broken_links | Find dangling links and optionally orphan notes |
+| graph_neighbors | Traverse the vault link graph within a bounded depth |
+| rename_note_with_links | Rename a note and rewrite links pointing to it |
 
 ### Design Patterns
 

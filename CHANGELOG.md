@@ -1,5 +1,12 @@
 # Changelog
 
+## Custom fork (unreleased)
+
+- Ported search pagination and bounded 200-result pages to SDK v2.
+- Added link graph tools, read-only protection and excluded-subtree filtering.
+- Added conservative MCP tool annotations for all 22 tools.
+
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
