@@ -3,6 +3,7 @@ import { FileSystemService } from "./filesystem.js";
 import { FrontmatterHandler, parseFrontmatter } from "./frontmatter.js";
 import { PathFilter } from "./pathfilter.js";
 import { SearchService } from "./search.js";
+import { LinkIndex, rewriteLinksTo } from "./linkindex.js";
 import { handleWikiLinkTool } from "./wikilink/index.js";
 import { posix, resolve } from "path";
 
@@ -25,6 +26,7 @@ const MUTATING_TOOLS = new Set([
   "move_file",
   "update_frontmatter",
   "manage_tags",
+  "rename_note_with_links",
 ]);
 
 function normalizeSubtree(path: string): string {
@@ -65,6 +67,7 @@ export function createServer(vaultPath: string, options: CreateServerOptions = {
   const resolvedVaultPath = resolve(vaultPath);
   const fileSystem = new FileSystemService(resolvedVaultPath, pathFilter, frontmatterHandler);
   const searchService = new SearchService(resolvedVaultPath, pathFilter);
+  const linkIndex = new LinkIndex(resolvedVaultPath, pathFilter, defaultExcludePaths);
 
   const server = new Server({ name, version }, {
     capabilities: { tools: {} },
@@ -287,6 +290,59 @@ export function createServer(vaultPath: string, options: CreateServerOptions = {
           }
         },
         {
+          name: "note_links",
+          description: "Show how a note is connected: outgoing links, backlinks (notes linking TO it), and any links that resolve to nothing. Use this to check what depends on a note before editing, renaming or deleting it.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "Path to the note relative to vault root" },
+              prettyPrint: { type: "boolean", description: "Format JSON response with indentation (default: false)", default: false }
+            },
+            required: ["path"]
+          }
+        },
+        {
+          name: "find_broken_links",
+          description: "List links that point at notes which do not exist, and optionally notes nothing links to (orphans). Use for vault hygiene after bulk edits, moves or imports.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              pathPrefix: { type: "string", description: "Restrict to a vault subtree, e.g. \"Projects/2026\"" },
+              includeOrphans: { type: "boolean", description: "Also return notes with no incoming links (default: false)", default: false },
+              limit: { type: "number", description: "Maximum broken links to return (default: 50)", default: 50 },
+              prettyPrint: { type: "boolean", description: "Format JSON response with indentation (default: false)", default: false }
+            }
+          }
+        },
+        {
+          name: "graph_neighbors",
+          description: "Return the sub-graph around a note — everything reachable within N hops, following links in both directions. Cheaper than reading each neighbour to discover the shape of a cluster.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "Path to the note relative to vault root" },
+              depth: { type: "number", description: "How many hops to follow (default: 1, max: 4)", default: 1 },
+              prettyPrint: { type: "boolean", description: "Format JSON response with indentation (default: false)", default: false }
+            },
+            required: ["path"]
+          }
+        },
+        {
+          name: "rename_note_with_links",
+          description: "Rename or move a note AND rewrite every [[wiki link]] and markdown link pointing at it. Prefer this over move_note, which renames the file only and leaves every reference to it broken.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              oldPath: { type: "string", description: "Current path of the note" },
+              newPath: { type: "string", description: "New path for the note" },
+              overwrite: { type: "boolean", description: "Allow overwriting an existing file (default: false)", default: false },
+              dryRun: { type: "boolean", description: "Report what would change without writing (default: false)", default: false },
+              prettyPrint: { type: "boolean", description: "Format JSON response with indentation (default: false)", default: false }
+            },
+            required: ["oldPath", "newPath"]
+          }
+        },
+        {
           name: "get_note_outline",
           description: "Get the heading structure of a note without reading its full content. Returns headings with level, text, and line number. Use this first to navigate large notes efficiently, then call read_note_lines to read only the section you need.",
           inputSchema: {
@@ -477,6 +533,113 @@ export function createServer(vaultPath: string, options: CreateServerOptions = {
           const indent = trimmedArgs.prettyPrint ? 2 : undefined;
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, indent) }]
+          };
+        }
+
+        case "note_links": {
+          await linkIndex.refresh();
+          const path = trimmedArgs.path;
+          const outgoing = linkIndex.getOutgoing(path);
+          const indent = trimmedArgs.prettyPrint ? 2 : undefined;
+          // A note may link to the same target several times; report each
+          // neighbour once with a count instead of repeating it.
+          const resolvedCounts = new Map<string, number>();
+          for (const link of outgoing) {
+            if (link.resolved) resolvedCounts.set(link.resolved, (resolvedCounts.get(link.resolved) ?? 0) + 1);
+          }
+          const backlinkCounts = new Map<string, number>();
+          for (const back of linkIndex.getBacklinks(path)) {
+            backlinkCounts.set(back.from, (backlinkCounts.get(back.from) ?? 0) + 1);
+          }
+          const payload = {
+            path,
+            outgoing: [...resolvedCounts].map(([p, count]) => ({ path: p, count })),
+            backlinks: [...backlinkCounts].map(([p, count]) => ({ path: p, count })),
+            unresolved: [...new Set(outgoing.filter((l) => !l.resolved).map((l) => l.target))],
+          };
+          return {
+            content: [{ type: "text", text: JSON.stringify(payload, null, indent) }],
+            structuredContent: payload,
+          };
+        }
+
+        case "find_broken_links": {
+          await linkIndex.refresh();
+          const limit = Math.max(1, Math.min(Number(trimmedArgs.limit ?? 50), 500));
+          const prefix = trimmedArgs.pathPrefix
+            ? String(trimmedArgs.pathPrefix).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "")
+            : undefined;
+          const all = linkIndex.getBroken(prefix);
+          const indent = trimmedArgs.prettyPrint ? 2 : undefined;
+          const payload: Record<string, unknown> = {
+            brokenLinks: all.slice(0, limit).map((b) => ({ from: b.from, target: b.target })),
+            totalBroken: all.length,
+            truncated: all.length > limit,
+          };
+          if (trimmedArgs.includeOrphans) {
+            payload.orphans = linkIndex.getOrphans(prefix);
+          }
+          return {
+            content: [{ type: "text", text: JSON.stringify(payload, null, indent) }],
+            structuredContent: payload,
+          };
+        }
+
+        case "graph_neighbors": {
+          await linkIndex.refresh();
+          const depth = Math.max(1, Math.min(Number(trimmedArgs.depth ?? 1), 4));
+          const graph = linkIndex.getNeighbors(trimmedArgs.path, depth);
+          const indent = trimmedArgs.prettyPrint ? 2 : undefined;
+          const payload = { path: trimmedArgs.path, depth, ...graph };
+          return {
+            content: [{ type: "text", text: JSON.stringify(payload, null, indent) }],
+            structuredContent: payload,
+          };
+        }
+
+        case "rename_note_with_links": {
+          await linkIndex.refresh();
+          const { oldPath, newPath, overwrite = false, dryRun = false } = trimmedArgs;
+          const referrers = linkIndex.getBacklinks(oldPath).map((b) => b.from);
+          const indent = trimmedArgs.prettyPrint ? 2 : undefined;
+
+          if (dryRun) {
+            const payload = { oldPath, newPath, wouldUpdate: referrers, dryRun: true };
+            return {
+              content: [{ type: "text", text: JSON.stringify(payload, null, indent) }],
+              structuredContent: payload,
+            };
+          }
+
+          // Move first: if the target already exists (and overwrite is false) this
+          // fails before any referring note has been rewritten.
+          const moveResult = await fileSystem.moveNote({ oldPath, newPath, overwrite });
+          if (!moveResult.success) {
+            return {
+              content: [{ type: "text", text: moveResult.message }],
+              structuredContent: { oldPath, newPath, updatedNotes: [], updatedCount: 0 },
+              isError: true,
+            };
+          }
+
+          const updated: string[] = [];
+          for (const referrer of referrers) {
+            // A note can link to itself; after the move it lives at the new path.
+            const from = referrer === oldPath ? newPath : referrer;
+            const note = await fileSystem.readNote(from);
+            const rewritten = rewriteLinksTo(note.originalContent, oldPath, newPath);
+            if (rewritten !== note.originalContent) {
+              // overwrite without frontmatter writes the bytes through untouched
+              await fileSystem.writeNote({ path: from, content: rewritten, mode: "overwrite" });
+              updated.push(from);
+            }
+          }
+          await linkIndex.refresh();
+
+          const payload = { oldPath, newPath, updatedNotes: updated, updatedCount: updated.length };
+          return {
+            content: [{ type: "text", text: JSON.stringify(payload, null, indent) }],
+            structuredContent: payload,
           };
         }
 
